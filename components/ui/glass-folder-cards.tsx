@@ -15,16 +15,11 @@ import * as React from "react"
  *   and the files lift a little out of the pocket.
  * - **Open** (click, Enter, Space): the panel falls further forward and the
  *   files rise out and fan, each one a button with its name on it.
- * - **Add** (`+`): a new file drops into the folder, the pocket gives a little
- *   under it, and the count rolls over.
+ * - **Add** (`+`): open an inline frosted creator or drop a new file into the
+ *   folder, the pocket gives a little under it, and the count rolls over.
+ * - **Rename**: double-click the folder name, click the edit icon on the label,
+ *   or choose Rename from the menu to rename the folder inline.
  * - **More** (`···`): a frosted menu you can drive from the keyboard.
- *
- * The artwork is generated, not fetched: a domain-warped noise field shaded
- * as a liquid surface, painted once per recipe into a canvas over a few
- * frames and shared between every folder that uses it. Supply `image` to use
- * a picture of your own instead.
- *
- * Self-contained: React is the only import. No CSS file, no images, no fonts.
  */
 
 export type ArtPreset = "aurora" | "ember" | "dusk" | "glacier" | "verdant"
@@ -69,6 +64,8 @@ export type FolderMenuItem = {
 
 export type GlassFolderProps = {
   label?: string
+  /** Called when the user renames the folder directly in the UI. */
+  onLabelChange?: (label: string) => void
   /** The second line. Defaults to the number of files, which rolls as you add. */
   meta?: string
   /** `light` is milk glass, `dark` is smoked glass. */
@@ -79,11 +76,11 @@ export type GlassFolderProps = {
   seed?: number
   /** Your own picture for the back panel, instead of generated art. */
   image?: string
-  /** The folder's contents. Read once; after that the folder owns the list. */
+  /** The folder's contents. */
   files?: FolderFile[]
   /** `add` drops new files in, `more` opens a menu, `none` hides the key. */
   action?: "add" | "more" | "none"
-  /** What `add` puts in the folder. Return nothing for an "Untitled" sheet. */
+  /** What `add` puts in the folder. Return nothing to use the interactive creator. */
   onAdd?: (files: FolderFile[]) => FolderFile | void
   onFilesChange?: (files: FolderFile[]) => void
   /** Items for the `more` menu. An Open / Close item is always first. */
@@ -247,17 +244,6 @@ export type ArtJob = {
   step: (rows: number) => boolean
 }
 
-/**
- * The artwork, as a job that can be spread over several frames.
- *
- * A field is domain-warped twice (each fold feeding the next), then
- * normalised by its own percentiles so every seed spans the whole palette.
- * The field is then treated as the height of a liquid surface: its slope
- * gives a normal, the normal gives diffuse light and a tight specular, and
- * fine striations run along the contours like combed ink. `streak` squeezes
- * the coordinates along one axis first, which turns the same folds into a
- * long-exposure smear.
- */
 export function createArtJob(width: number, height: number, recipe: ArtRecipe, seed: number): ArtJob {
   const w = Math.max(1, Math.round(width))
   const h = Math.max(1, Math.round(height))
@@ -276,9 +262,6 @@ export function createArtJob(width: number, height: number, recipe: ArtRecipe, s
   const ca = Math.cos(angle)
   const sa = Math.sin(angle)
   const m = Math.min(w, h)
-  // The field is sampled on a half-resolution grid (with a one-cell apron) and
-  // brought up with Catmull-Rom, which keeps the slope continuous for the
-  // lighting: a quarter of the noise for no visible loss.
   const gw = Math.ceil(w / 2) + 3
   const gh = Math.ceil(h / 2) + 3
   const G = new Float32Array(gw * gh)
@@ -310,7 +293,6 @@ export function createArtJob(width: number, height: number, recipe: ArtRecipe, s
   }
 
   const upsample = () => {
-    // pixel x sits on grid column x/2 + 1: either exactly on a sample, or halfway
     const cr = (a: number, b: number, c: number, d: number) => (-a + 9 * b + 9 * c - d) / 16
     const T = new Float32Array(w * gh)
     for (let gy = 0; gy < gh; gy++) {
@@ -335,7 +317,6 @@ export function createArtJob(width: number, height: number, recipe: ArtRecipe, s
   }
 
   const colorize = () => {
-    // percentiles from a sample, not a full sort: cheap and just as stable
     const sample: number[] = []
     const stride = Math.max(1, Math.floor(F.length / 4096))
     for (let i = 0; i < F.length; i += stride) sample.push(F[i])
@@ -395,10 +376,6 @@ export function fanSlot(index: number, count: number): number {
 
 const recipeOf = (art: ArtPreset | ArtRecipe): ArtRecipe => (typeof art === "string" ? ART_PRESETS[art] : art)
 
-// ---------------------------------------------------------------------------
-// One shared painter: every folder on the page queues its art here and the
-// queue spends a few milliseconds a frame, so a row of folders never janks.
-
 type Painted = HTMLCanvasElement
 const artCache = new Map<string, Promise<Painted>>()
 const queue: { job: ArtJob; priority: number; done: (c: Painted) => void }[] = []
@@ -426,13 +403,11 @@ function pump() {
   requestAnimationFrame(tick)
 }
 
-/** Lower priority paints first: back panels (0) before the files tucked behind glass (1). */
 function paint(recipe: ArtRecipe, seed: number, w: number, h: number, priority: number): Promise<Painted> {
   const key = JSON.stringify([recipe, seed, w, h])
   let p = artCache.get(key)
   if (!p) {
     p = new Promise<Painted>((done) => {
-      // never jump the job already in progress
       let at = queue.length
       while (at > 1 && queue[at - 1].priority > priority) at--
       queue.splice(at, 0, { job: createArtJob(w, h, recipe, seed), priority, done })
@@ -494,13 +469,9 @@ function ArtCanvas({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Geometry, in the folder's own units. The stage is drawn at 340 × 272 and
-// scaled to `width`, so the shapes can be fixed paths.
-
 const W = 340
 const H = 272
-const HEADROOM = 54 // room above the back panel for the files to rise into
+const HEADROOM = 54
 const FRONT_TOP = 74
 const FRONT_H = H - FRONT_TOP
 const SHEET_W = 272
@@ -527,8 +498,18 @@ const SAMPLE_FILES: FolderFile[] = [
   { name: "Brief.pdf", meta: "PDF · 1.2 MB" },
 ]
 
+const ART_OPTIONS: { value: "paper" | ArtPreset; label: string; swatch: string }[] = [
+  { value: "paper", label: "Paper", swatch: "linear-gradient(135deg, #ffffff 0%, #dcdce0 100%)" },
+  { value: "aurora", label: "Aurora", swatch: "linear-gradient(135deg, #e9c2b8 0%, #c2433f 50%, #6f97c2 100%)" },
+  { value: "ember", label: "Ember", swatch: "linear-gradient(135deg, #16252c 0%, #a3201a 55%, #ff8a5c 100%)" },
+  { value: "dusk", label: "Dusk", swatch: "linear-gradient(135deg, #3e2850 0%, #b3502f 55%, #fbe7d2 100%)" },
+  { value: "glacier", label: "Glacier", swatch: "linear-gradient(135deg, #f7f8fa 0%, #9fb4c7 100%)" },
+  { value: "verdant", label: "Verdant", swatch: "linear-gradient(135deg, #173024 0%, #a7843a 60%, #fbf3d6 100%)" },
+]
+
 export default function GlassFolder({
-  label = "My Files",
+  label: labelProp = "My Files",
+  onLabelChange,
   meta,
   tone = "light",
   art = "aurora",
@@ -556,13 +537,40 @@ export default function GlassFolder({
   const hitRef = React.useRef<HTMLButtonElement>(null)
   const keyRef = React.useRef<HTMLButtonElement>(null)
   const menuRef = React.useRef<HTMLDivElement>(null)
+  const modalRef = React.useRef<HTMLDivElement>(null)
+  const renameInputRef = React.useRef<HTMLInputElement>(null)
+  const fileNameInputRef = React.useRef<HTMLInputElement>(null)
+
+  const [folderLabel, setFolderLabel] = React.useState(labelProp)
+  React.useEffect(() => {
+    setFolderLabel(labelProp)
+  }, [labelProp])
+
+  const [renaming, setRenaming] = React.useState(false)
+  const [draftLabel, setDraftLabel] = React.useState(labelProp)
 
   const [files, setFiles] = React.useState<FolderFile[]>(initialFiles)
-  // ids survive re-renders so a newly added file is the only one that animates in
   const ids = React.useRef<number[]>(initialFiles.map((_, i) => i))
   const nextId = React.useRef(initialFiles.length)
   const [dropped, setDropped] = React.useState<number | null>(null)
   const [bump, setBump] = React.useState(0)
+
+  // Sync external files prop when length or content changes externally
+  React.useEffect(() => {
+    setFiles(initialFiles)
+    if (ids.current.length !== initialFiles.length) {
+      ids.current = initialFiles.map((_, i) => nextId.current + i)
+      nextId.current += initialFiles.length
+    }
+  }, [initialFiles])
+
+  // File creator & editor state
+  const [creatorOpen, setCreatorOpen] = React.useState(false)
+  const [editingIndex, setEditingIndex] = React.useState<number | null>(null)
+  const [newFileName, setNewFileName] = React.useState("")
+  const [newFileMeta, setNewFileMeta] = React.useState("")
+  const [newFileArt, setNewFileArt] = React.useState<"paper" | ArtPreset>("aurora")
+  const [newFileImage, setNewFileImage] = React.useState("")
 
   const [openState, setOpenState] = React.useState(defaultOpen)
   const open = openProp ?? openState
@@ -643,10 +651,16 @@ export default function GlassFolder({
 
   // ---- Escape and a press outside close whatever is open ------------------
   React.useEffect(() => {
-    if (!open && !menuOpen) return
+    if (!open && !menuOpen && !creatorOpen && !renaming) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
-      if (menuOpen) {
+      if (renaming) {
+        setRenaming(false)
+        setDraftLabel(folderLabel)
+      } else if (creatorOpen) {
+        setCreatorOpen(false)
+        setEditingIndex(null)
+      } else if (menuOpen) {
         setMenuOpen(false)
         keyRef.current?.focus()
       } else {
@@ -656,8 +670,12 @@ export default function GlassFolder({
     }
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node
+      if (creatorOpen && !modalRef.current?.contains(t) && !keyRef.current?.contains(t)) {
+        setCreatorOpen(false)
+        setEditingIndex(null)
+      }
       if (menuOpen && !menuRef.current?.contains(t) && !keyRef.current?.contains(t)) setMenuOpen(false)
-      if (open && !menuOpen && !rootRef.current?.contains(t)) setOpen(false)
+      if (open && !menuOpen && !creatorOpen && !renaming && !rootRef.current?.contains(t)) setOpen(false)
     }
     document.addEventListener("keydown", onKey)
     document.addEventListener("pointerdown", onDown)
@@ -665,16 +683,66 @@ export default function GlassFolder({
       document.removeEventListener("keydown", onKey)
       document.removeEventListener("pointerdown", onDown)
     }
-  }, [open, menuOpen, setOpen])
+  }, [open, menuOpen, creatorOpen, renaming, folderLabel, setOpen])
 
-  // focus the first menu item when the menu opens
   React.useEffect(() => {
     if (menuOpen) menuRef.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus()
   }, [menuOpen])
 
-  const addFile = () => {
-    const made = onAdd?.(files)
-    const file: FolderFile = made || { name: "Untitled " + (files.length + 1), meta: "Just now" }
+  React.useEffect(() => {
+    if (renaming) {
+      setTimeout(() => {
+        renameInputRef.current?.focus()
+        renameInputRef.current?.select()
+      }, 20)
+    }
+  }, [renaming])
+
+  React.useEffect(() => {
+    if (creatorOpen) {
+      setTimeout(() => {
+        fileNameInputRef.current?.focus()
+        fileNameInputRef.current?.select()
+      }, 30)
+    }
+  }, [creatorOpen])
+
+  const startRename = () => {
+    setMenuOpen(false)
+    setCreatorOpen(false)
+    setDraftLabel(folderLabel)
+    setRenaming(true)
+  }
+
+  const commitRename = () => {
+    const trimmed = draftLabel.trim() || folderLabel || "Untitled Folder"
+    setFolderLabel(trimmed)
+    setRenaming(false)
+    onLabelChange?.(trimmed)
+  }
+
+  const openCreator = (editIdx: number | null = null) => {
+    setMenuOpen(false)
+    setRenaming(false)
+    if (editIdx !== null && files[editIdx]) {
+      const f = files[editIdx]
+      setEditingIndex(editIdx)
+      setNewFileName(f.name)
+      setNewFileMeta(f.meta ?? "")
+      setNewFileArt(typeof f.art === "string" ? f.art : "paper")
+      setNewFileImage(f.image ?? "")
+    } else {
+      const presets: ("paper" | ArtPreset)[] = ["aurora", "ember", "dusk", "verdant", "glacier", "paper"]
+      setEditingIndex(null)
+      setNewFileName("File " + (files.length + 1))
+      setNewFileMeta("Just now")
+      setNewFileArt(presets[files.length % presets.length])
+      setNewFileImage("")
+    }
+    setCreatorOpen(true)
+  }
+
+  const dropNewFile = (file: FolderFile) => {
     const next = [...files, file]
     const id = nextId.current++
     ids.current = [...ids.current, id]
@@ -684,9 +752,74 @@ export default function GlassFolder({
     onFilesChange?.(next)
   }
 
+  const handleSaveFile = (e: React.FormEvent) => {
+    e.preventDefault()
+    const cleanName = newFileName.trim() || "Untitled " + (files.length + 1)
+    const cleanMeta = newFileMeta.trim() || "Just now"
+    const cleanImg = newFileImage.trim()
+
+    const builtFile: FolderFile = {
+      name: cleanName,
+      meta: cleanMeta,
+      ...(cleanImg
+        ? { image: cleanImg }
+        : newFileArt !== "paper"
+          ? { art: newFileArt }
+          : {}),
+    }
+
+    if (editingIndex !== null && files[editingIndex]) {
+      const next = files.map((item, i) => (i === editingIndex ? builtFile : item))
+      setFiles(next)
+      onFilesChange?.(next)
+    } else {
+      dropNewFile(builtFile)
+    }
+    setCreatorOpen(false)
+    setEditingIndex(null)
+  }
+
+  const handleDeleteFile = (indexToDelete: number) => {
+    const next = files.filter((_, i) => i !== indexToDelete)
+    ids.current = ids.current.filter((_, i) => i !== indexToDelete)
+    setFiles(next)
+    onFilesChange?.(next)
+    setCreatorOpen(false)
+    setEditingIndex(null)
+  }
+
+  const handleKeyButton = () => {
+    if (action === "add") {
+      if (onAdd) {
+        const made = onAdd(files)
+        if (made) {
+          dropNewFile(made)
+          return
+        }
+      }
+      openCreator(null)
+    } else {
+      setMenuOpen((m) => !m)
+    }
+  }
+
+  // Enhance menu items so "Rename" and "New file" always work out of the box
+  const hasRenameInMenu = menu.some((m) => /rename|đổi tên/i.test(m.label))
+  const hasNewFileInMenu = menu.some((m) => /new file|tạo file|add file/i.test(m.label))
+
   const menuItems: FolderMenuItem[] = [
     { label: open ? "Close folder" : "Open folder", onSelect: () => setOpen(!open) },
-    ...menu,
+    ...(!hasNewFileInMenu ? [{ label: "New file…", onSelect: () => openCreator(null) }] : []),
+    ...(!hasRenameInMenu ? [{ label: "Rename folder…", onSelect: startRename }] : []),
+    ...menu.map((item) => {
+      if (/rename|đổi tên/i.test(item.label) && !item.onSelect) {
+        return { ...item, onSelect: startRename }
+      }
+      if (/new file|tạo file|add file/i.test(item.label) && !item.onSelect) {
+        return { ...item, onSelect: () => openCreator(null) }
+      }
+      return item
+    }),
   ]
 
   const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -703,11 +836,12 @@ export default function GlassFolder({
     else if (e.key === "Tab") setMenuOpen(false)
   }
 
-  // the newest files sit at the front of the stack, nearest the glass
   const start = Math.max(0, files.length - MAX_VISIBLE)
   const visible = files.slice(start)
   const count = files.length
-  const metaLine = meta ?? count + (count === 1 ? " item" : " items")
+  const metaLine = meta
+    ? meta + " · " + count + (count === 1 ? " item" : " items")
+    : count + (count === 1 ? " item" : " items")
 
   return (
     <div
@@ -760,14 +894,82 @@ export default function GlassFolder({
               type="button"
               className="gf-hit"
               aria-expanded={open}
-              aria-label={(open ? "Close " : "Open ") + label + ", " + count + (count === 1 ? " item" : " items")}
+              aria-label={(open ? "Close " : "Open ") + folderLabel + ", " + count + (count === 1 ? " item" : " items")}
               onClick={() => {
+                if (renaming) return
                 setMenuOpen(false)
+                setCreatorOpen(false)
                 setOpen(!open)
               }}
             />
             <div className="gf-label">
-              <span className="gf-title">{label}</span>
+              {renaming ? (
+                <form
+                  className="gf-rename-form"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    commitRename()
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    ref={renameInputRef}
+                    type="text"
+                    value={draftLabel}
+                    onChange={(e) => setDraftLabel(e.target.value)}
+                    onBlur={commitRename}
+                    className="gf-rename-input"
+                    aria-label="Folder name"
+                    maxLength={32}
+                  />
+                  <button type="submit" className="gf-inline-btn" title="Save name" onMouseDown={(e) => e.preventDefault()}>
+                    ✓
+                  </button>
+                </form>
+              ) : (
+                <div className="gf-title-row">
+                  <span
+                    className="gf-title"
+                    title="Double-click to rename folder"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation()
+                      startRename()
+                    }}
+                  >
+                    {folderLabel}
+                  </span>
+                  <div className="gf-quick-actions">
+                    <button
+                      type="button"
+                      className="gf-inline-icon"
+                      title="Đổi tên folder (Rename)"
+                      aria-label={"Rename " + folderLabel}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        startRename()
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <path d="M11.5 2.5a1.4 1.4 0 0 1 2 2L5.5 12.5 2 13.5l1-3.5 8.5-7.5Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className="gf-inline-icon"
+                      title="Tạo file mới trong folder"
+                      aria-label={"Create file in " + folderLabel}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openCreator(null)
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <path d="M8 3v10M3 8h10" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
               <span className="gf-meta" key={metaLine}>
                 {metaLine}
               </span>
@@ -775,9 +977,10 @@ export default function GlassFolder({
           </div>
 
           {/* the contents: after the glass in tab order, beneath it on screen */}
-          <div ref={filesRef} className="gf-files" role="list" aria-label={label + " contents"}>
+          <div ref={filesRef} className="gf-files" role="list" aria-label={folderLabel + " contents"}>
             {visible.map((file, v) => {
-              const id = ids.current[start + v]
+              const actualIndex = start + v
+              const id = ids.current[actualIndex] ?? actualIndex
               const slot = fanSlot(v, visible.length)
               const jitter = rng(hashString(file.name) + id)
               const picture = !!(file.art || file.image)
@@ -826,11 +1029,18 @@ export default function GlassFolder({
               return (
                 <div key={id} role="listitem" className="gf-sheet-slot">
                   {file.href ? (
-                    <a {...common} href={file.href} onClick={() => onFileSelect?.(file, start + v)}>
+                    <a {...common} href={file.href} onClick={() => onFileSelect?.(file, actualIndex)}>
                       {inner}
                     </a>
                   ) : (
-                    <button {...common} type="button" onClick={() => onFileSelect?.(file, start + v)}>
+                    <button
+                      {...common}
+                      type="button"
+                      onClick={() => {
+                        onFileSelect?.(file, actualIndex)
+                        openCreator(actualIndex)
+                      }}
+                    >
                       {inner}
                     </button>
                   )}
@@ -844,11 +1054,11 @@ export default function GlassFolder({
               ref={keyRef}
               type="button"
               className={"gf-key gf-key--" + action}
-              aria-label={action === "add" ? "Add a file to " + label : "More options for " + label}
-              aria-haspopup={action === "more" ? "menu" : undefined}
-              aria-expanded={action === "more" ? menuOpen : undefined}
-              aria-controls={action === "more" ? "gf-menu-" + uid : undefined}
-              onClick={() => (action === "add" ? addFile() : setMenuOpen((m) => !m))}
+              aria-label={action === "add" ? "Add a file to " + folderLabel : "More options for " + folderLabel}
+              aria-haspopup={action === "more" ? "menu" : "dialog"}
+              aria-expanded={action === "more" ? menuOpen : creatorOpen}
+              aria-controls={action === "more" ? "gf-menu-" + uid : "gf-modal-" + uid}
+              onClick={handleKeyButton}
             >
               {action === "add" ? (
                 <svg key={bump} className="gf-glyph gf-glyph--plus" viewBox="0 0 24 24" aria-hidden="true">
@@ -869,7 +1079,7 @@ export default function GlassFolder({
               ref={menuRef}
               id={"gf-menu-" + uid}
               role="menu"
-              aria-label={label + " options"}
+              aria-label={folderLabel + " options"}
               className="gf-menu"
               data-open={menuOpen || undefined}
               onKeyDown={onMenuKey}
@@ -893,6 +1103,118 @@ export default function GlassFolder({
               ))}
             </div>
           ) : null}
+
+          {/* Frosted Glass Create / Edit File Popover */}
+          <div
+            ref={modalRef}
+            id={"gf-modal-" + uid}
+            role="dialog"
+            aria-label={editingIndex !== null ? "Edit file" : "Create file in " + folderLabel}
+            className="gf-modal"
+            data-open={creatorOpen || undefined}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <form onSubmit={handleSaveFile} className="gf-modal-form">
+              <div className="gf-modal-header">
+                <span className="gf-modal-title">
+                  {editingIndex !== null ? "Chỉnh sửa file" : "Tạo file mới"}
+                </span>
+                <button
+                  type="button"
+                  className="gf-modal-close"
+                  onClick={() => {
+                    setCreatorOpen(false)
+                    setEditingIndex(null)
+                  }}
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <label className="gf-field">
+                <span className="gf-field-label">Tên file</span>
+                <input
+                  ref={fileNameInputRef}
+                  type="text"
+                  value={newFileName}
+                  onChange={(e) => setNewFileName(e.target.value)}
+                  placeholder="Ví dụ: Lookbook.pdf"
+                  className="gf-input"
+                  maxLength={40}
+                  required
+                />
+              </label>
+
+              <label className="gf-field">
+                <span className="gf-field-label">Mô tả / Dung lượng</span>
+                <input
+                  type="text"
+                  value={newFileMeta}
+                  onChange={(e) => setNewFileMeta(e.target.value)}
+                  placeholder="Ví dụ: PNG · 4.2 MB"
+                  className="gf-input"
+                  maxLength={28}
+                />
+              </label>
+
+              <div className="gf-field">
+                <span className="gf-field-label">Giao diện thẻ file</span>
+                <div className="gf-swatches">
+                  {ART_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      title={opt.label}
+                      className={"gf-swatch" + (newFileArt === opt.value && !newFileImage ? " gf-swatch--active" : "")}
+                      style={{ background: opt.swatch }}
+                      onClick={() => {
+                        setNewFileArt(opt.value)
+                        setNewFileImage("")
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <label className="gf-field">
+                <span className="gf-field-label">Link ảnh (tùy chọn)</span>
+                <input
+                  type="url"
+                  value={newFileImage}
+                  onChange={(e) => setNewFileImage(e.target.value)}
+                  placeholder="https://images.unsplash.com/..."
+                  className="gf-input"
+                />
+              </label>
+
+              <div className="gf-modal-actions">
+                {editingIndex !== null ? (
+                  <button
+                    type="button"
+                    className="gf-btn gf-btn--danger"
+                    onClick={() => handleDeleteFile(editingIndex)}
+                  >
+                    Xóa file
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="gf-btn gf-btn--ghost"
+                    onClick={() => {
+                      setCreatorOpen(false)
+                      setEditingIndex(null)
+                    }}
+                  >
+                    Hủy
+                  </button>
+                )}
+                <button type="submit" className="gf-btn gf-btn--primary">
+                  {editingIndex !== null ? "Lưu thay đổi" : "+ Tạo file"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </div>
@@ -1000,7 +1322,6 @@ canvas.gf-art[data-ready] { opacity: 1; filter: none; }
   inset: 0;
   z-index: 5;
   pointer-events: none;
-  /* nothing hangs out of the bottom of the pocket, however tall the stack */
   clip-path: inset(-400px -400px 10px -400px);
 }
 .gf-sheet-slot { display: contents; }
@@ -1179,13 +1500,20 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 200px;
+  max-width: 220px;
   pointer-events: none;
   color: var(--gf-ink);
 }
 .gf-root[data-place="bottom-left"] .gf-label { left: 28px; bottom: 32px; }
 .gf-root[data-place="top-left"] .gf-label { left: 28px; top: 34px; }
-.gf-root[data-place="top-right"] .gf-label { right: 32px; top: 52px; align-items: flex-start; }
+.gf-root[data-place="top-right"] .gf-label { right: 28px; top: 52px; align-items: flex-start; }
+
+.gf-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
 .gf-title {
   font-size: 18px;
   font-weight: 500;
@@ -1194,6 +1522,76 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: text;
+}
+.gf-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.45;
+  transition: opacity .2s var(--gf-ease);
+}
+.gf-root:hover .gf-quick-actions,
+.gf-root:focus-within .gf-quick-actions {
+  opacity: 1;
+}
+.gf-inline-icon {
+  all: unset;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--gf-ink);
+  background: rgba(128, 128, 136, .14);
+  transition: background .18s var(--gf-ease), transform .18s var(--gf-ease);
+}
+.gf-inline-icon:hover {
+  background: rgba(128, 128, 136, .28);
+  transform: scale(1.06);
+}
+.gf-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  pointer-events: auto;
+}
+.gf-rename-input {
+  width: 152px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(76, 141, 255, .75);
+  background: rgba(255, 255, 255, .85);
+  color: #141416;
+  font-size: 15px;
+  font-weight: 500;
+  outline: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .12);
+}
+.gf-root[data-tone="dark"] .gf-rename-input {
+  background: rgba(24, 24, 28, .9);
+  color: #f5f5f7;
+}
+.gf-inline-btn {
+  all: unset;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  background: #18181b;
+  color: #fff;
+}
+.gf-root[data-tone="dark"] .gf-inline-btn {
+  background: #f4f4f6;
+  color: #141416;
 }
 .gf-meta {
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -1275,7 +1673,7 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
   border-radius: 16px;
   display: flex;
   flex-direction: column;
-  background: rgba(252, 252, 253, .72);
+  background: rgba(252, 252, 253, .78);
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
   backdrop-filter: blur(24px) saturate(1.6);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 0 0 .5px rgba(0, 0, 0, .14), 0 24px 48px -16px rgba(10, 12, 20, .4);
@@ -1286,7 +1684,7 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
   transition: opacity .2s var(--gf-ease), transform .32s var(--gf-spring), visibility 0s .32s;
 }
 .gf-menu[data-open] { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
-.gf-root[data-tone="dark"] .gf-menu { background: rgba(30, 30, 34, .72); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 0 0 .5px rgba(255, 255, 255, .1), 0 24px 48px -16px rgba(0, 0, 0, .8); }
+.gf-root[data-tone="dark"] .gf-menu { background: rgba(30, 30, 34, .82); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 0 0 .5px rgba(255, 255, 255, .1), 0 24px 48px -16px rgba(0, 0, 0, .8); }
 .gf-menu-item {
   all: unset;
   box-sizing: border-box;
@@ -1302,6 +1700,165 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
 .gf-root[data-tone="dark"] .gf-menu-item:hover, .gf-root[data-tone="dark"] .gf-menu-item:focus-visible { background: rgba(255, 255, 255, .09); }
 .gf-menu-item--danger { color: #d92d20; }
 .gf-root[data-tone="dark"] .gf-menu-item--danger { color: #ff6b5e; }
+
+/* ---- file creator / editor modal ------------------------------------------- */
+.gf-modal {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 16px;
+  z-index: 30;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(252, 252, 254, .88);
+  -webkit-backdrop-filter: blur(28px) saturate(1.7);
+  backdrop-filter: blur(28px) saturate(1.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .95),
+    0 0 0 1px rgba(0, 0, 0, .12),
+    0 28px 60px -12px rgba(10, 12, 20, .48);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(12px) scale(.95);
+  transition: opacity .22s var(--gf-ease), transform .34s var(--gf-spring), visibility 0s .34s;
+  pointer-events: none;
+}
+.gf-modal[data-open] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+  pointer-events: auto;
+}
+.gf-root[data-tone="dark"] .gf-modal {
+  background: rgba(24, 24, 28, .9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .14),
+    0 0 0 1px rgba(255, 255, 255, .12),
+    0 28px 60px -12px rgba(0, 0, 0, .85);
+}
+.gf-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.gf-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.gf-modal-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gf-ink);
+}
+.gf-modal-close {
+  all: unset;
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--gf-ink-soft);
+}
+.gf-modal-close:hover {
+  background: rgba(128, 128, 136, .16);
+  color: var(--gf-ink);
+}
+.gf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.gf-field-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: var(--gf-ink-soft);
+}
+.gf-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 136, .28);
+  background: rgba(255, 255, 255, .75);
+  color: #141416;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color .15s;
+}
+.gf-input:focus {
+  border-color: #4c8dff;
+}
+.gf-root[data-tone="dark"] .gf-input {
+  background: rgba(12, 12, 15, .65);
+  color: #f5f5f7;
+  border-color: rgba(255, 255, 255, .16);
+}
+.gf-swatches {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-top: 2px;
+}
+.gf-swatch {
+  all: unset;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1.5px solid rgba(0, 0, 0, .18);
+  transition: transform .18s var(--gf-spring), box-shadow .18s;
+}
+.gf-swatch:hover {
+  transform: scale(1.1);
+}
+.gf-swatch--active {
+  transform: scale(1.14);
+  box-shadow: 0 0 0 2px #4c8dff;
+}
+.gf-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 4px;
+}
+.gf-btn {
+  all: unset;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: transform .15s, opacity .15s, background .15s;
+}
+.gf-btn:active {
+  transform: scale(.96);
+}
+.gf-btn--primary {
+  background: #141416;
+  color: #fff;
+}
+.gf-root[data-tone="dark"] .gf-btn--primary {
+  background: #f5f5f7;
+  color: #141416;
+}
+.gf-btn--ghost {
+  color: var(--gf-ink-soft);
+  background: rgba(128, 128, 136, .12);
+}
+.gf-btn--danger {
+  color: #fff;
+  background: #d92d20;
+  margin-right: auto;
+}
 
 /* ---- entrance: the folder assembles itself ---------------------------------- */
 .gf-root:not([data-entered]) .gf-back,
