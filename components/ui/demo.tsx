@@ -198,8 +198,8 @@ export default function GlassFolderCardsDemo() {
         ))}
       </div>
 
-      <p className="relative mt-14 text-center font-mono text-[11px] tracking-[0.16em] text-muted-foreground uppercase">
-        Click mặt kính để mở · Bấm ✎ hoặc đúp chuột vào tên để đổi tên · Bấm + để tạo file · Click vào file để sửa/xóa
+      <p className="relative mt-14 text-center font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+        Kéo thả ảnh hoặc bấm + để tải ảnh từ máy · Click/Double-click vào file để mở xem lớn · Bấm ✎ để đổi tên/sửa
       </p>
     </div>
   )
