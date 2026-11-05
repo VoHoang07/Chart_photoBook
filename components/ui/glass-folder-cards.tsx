@@ -462,7 +462,7 @@ function readImageFile(file: File): Promise<{ dataUrl: string; meta: string; bas
       const result = reader.result as string
       const img = new Image()
       img.onload = () => {
-        const maxDim = 1280
+        const maxDim = 2200
         let { width, height } = img
         if (width > maxDim || height > maxDim) {
           if (width > height) {
@@ -482,7 +482,7 @@ function readImageFile(file: File): Promise<{ dataUrl: string; meta: string; bas
           return
         }
         ctx.drawImage(img, 0, 0, width, height)
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.86)
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.92)
         resolve({ dataUrl, meta, baseName })
       }
       img.onerror = () => resolve({ dataUrl: result, meta, baseName })
@@ -599,10 +599,14 @@ export default function GlassFolder({
 
   // Fullscreen File Viewer (Lightbox) state
   const [viewingIndex, setViewingIndex] = React.useState<number | null>(null)
+  const [zoom, setZoom] = React.useState<number>(1) // 1 = 920px readable width, 0 = fit height
   const [mounted, setMounted] = React.useState(false)
   React.useEffect(() => {
     setMounted(true)
   }, [])
+  React.useEffect(() => {
+    if (viewingIndex !== null) setZoom(1)
+  }, [viewingIndex])
 
   const [openState, setOpenState] = React.useState(defaultOpen)
   const open = openProp ?? openState
@@ -692,6 +696,12 @@ export default function GlassFolder({
           setViewingIndex((prev) => (prev !== null ? (prev + 1) % files.length : null))
         } else if (e.key === "ArrowLeft" && files.length > 1) {
           setViewingIndex((prev) => (prev !== null ? (prev - 1 + files.length) % files.length : null))
+        } else if (e.key === "+" || e.key === "=") {
+          setZoom((z) => Math.min(2.5, Number(((z || 0.75) + 0.25).toFixed(2))))
+        } else if (e.key === "-") {
+          setZoom((z) => Math.max(0.5, Number(((z || 1) - 0.25).toFixed(2))))
+        } else if (e.key === "0") {
+          setZoom(1)
         }
         return
       }
@@ -1395,6 +1405,34 @@ export default function GlassFolder({
                   </div>
                   <div className="gf-lightbox-actions">
                     {viewingFile.image ? (
+                      <div className="gf-lb-zoom-group">
+                        <button
+                          type="button"
+                          className="gf-lb-btn"
+                          title="Thu nhỏ (-)"
+                          onClick={() => setZoom((z) => Math.max(0.5, Number(((z || 0.75) - 0.25).toFixed(2))))}
+                        >
+                          🔍 −
+                        </button>
+                        <button
+                          type="button"
+                          className="gf-lb-btn"
+                          title="Đổi chế độ Vừa khung / Đọc rõ 100%"
+                          onClick={() => setZoom((z) => (z === 0 ? 1 : 0))}
+                        >
+                          {zoom === 0 ? "Vừa khung" : `${Math.round(zoom * 100)}%`}
+                        </button>
+                        <button
+                          type="button"
+                          className="gf-lb-btn"
+                          title="Phóng to (+)"
+                          onClick={() => setZoom((z) => Math.min(2.5, Number(((z || 0.75) + 0.25).toFixed(2))))}
+                        >
+                          🔍 +
+                        </button>
+                      </div>
+                    ) : null}
+                    {viewingFile.image ? (
                       <a
                         href={viewingFile.image}
                         download={viewingFile.name}
@@ -1429,7 +1467,7 @@ export default function GlassFolder({
                   </div>
                 </div>
 
-                <div className="gf-lightbox-body">
+                <div className="gf-lightbox-stage">
                   {files.length > 1 ? (
                     <button
                       type="button"
@@ -1441,37 +1479,55 @@ export default function GlassFolder({
                     </button>
                   ) : null}
 
-                  {viewingFile.image ? (
-                    <img
-                      src={viewingFile.image}
-                      alt={viewingFile.name}
-                      className="gf-lightbox-img"
-                    />
-                  ) : viewingFile.art ? (
-                    <div className="gf-lightbox-art-wrap">
-                      <ArtCanvas
-                        className="gf-lightbox-art"
-                        art={viewingFile.art}
-                        seed={hashString(viewingFile.name) % 997}
-                        w={680}
-                        h={440}
-                        density={1.25}
-                        priority={0}
+                  <div className={"gf-lightbox-body" + (zoom === 0 ? " gf-lightbox-body--fit" : "")}>
+                    {viewingFile.image ? (
+                      <img
+                        src={viewingFile.image}
+                        alt={viewingFile.name}
+                        title="Click vào ảnh để phóng to / thu nhỏ"
+                        onClick={() =>
+                          setZoom((z) => (z === 0 ? 1 : z < 1.5 ? 1.5 : z < 2 ? 2 : 1))
+                        }
+                        className={
+                          "gf-lightbox-img" +
+                          (zoom === 0
+                            ? " gf-lightbox-img--fit"
+                            : zoom >= 2
+                              ? " gf-lightbox-img--zoomout"
+                              : "")
+                        }
+                        style={
+                          zoom === 0
+                            ? undefined
+                            : { width: `${Math.round(920 * zoom)}px`, maxWidth: zoom <= 1 ? "100%" : "none" }
+                        }
                       />
-                    </div>
-                  ) : (
-                    <div className="gf-lightbox-paper">
-                      <h4>{viewingFile.name}</h4>
-                      <p>{viewingFile.meta || "Tài liệu văn bản"}</p>
-                      <div className="gf-lightbox-lines">
-                        <span style={{ width: "90%" }} />
-                        <span style={{ width: "95%" }} />
-                        <span style={{ width: "74%" }} />
-                        <span style={{ width: "88%" }} />
-                        <span style={{ width: "60%" }} />
+                    ) : viewingFile.art ? (
+                      <div className="gf-lightbox-art-wrap">
+                        <ArtCanvas
+                          className="gf-lightbox-art"
+                          art={viewingFile.art}
+                          seed={hashString(viewingFile.name) % 997}
+                          w={860}
+                          h={560}
+                          density={1.25}
+                          priority={0}
+                        />
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="gf-lightbox-paper">
+                        <h4>{viewingFile.name}</h4>
+                        <p>{viewingFile.meta || "Tài liệu văn bản"}</p>
+                        <div className="gf-lightbox-lines">
+                          <span style={{ width: "90%" }} />
+                          <span style={{ width: "95%" }} />
+                          <span style={{ width: "74%" }} />
+                          <span style={{ width: "88%" }} />
+                          <span style={{ width: "60%" }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   {files.length > 1 ? (
                     <button
@@ -1489,7 +1545,7 @@ export default function GlassFolder({
                   <span>
                     Folder: <strong>{folderLabel}</strong> ({viewingIndex + 1} / {files.length})
                   </span>
-                  <span>Nhấn phím ← → để chuyển file · ESC để đóng</span>
+                  <span>Cuộn chuột để đọc · Click vào ảnh hoặc bấm 🔍+ để phóng to · Phím ← → chuyển bài · ESC đóng</span>
                 </div>
               </div>
             </div>,
@@ -1508,11 +1564,11 @@ const GF_LIGHTBOX_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
-  background: rgba(10, 12, 16, .74);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  backdrop-filter: blur(20px) saturate(1.4);
-  animation: gf-lb-fade .2s ease both;
+  padding: 10px;
+  background: rgba(8, 10, 14, .82);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  backdrop-filter: blur(22px) saturate(1.4);
+  animation: gf-lb-fade .18s ease both;
   font-family: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
 }
 @keyframes gf-lb-fade {
@@ -1521,31 +1577,33 @@ const GF_LIGHTBOX_CSS = `
 }
 .gf-lightbox-card {
   position: relative;
-  width: min(860px, 94vw);
-  max-height: 90vh;
+  width: min(1360px, 97vw);
+  height: 95vh;
   display: flex;
   flex-direction: column;
-  border-radius: 24px;
+  border-radius: 22px;
   overflow: hidden;
-  background: rgba(24, 24, 28, .92);
+  background: rgba(20, 20, 24, .95);
   color: #f5f5f7;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, .16),
     0 0 0 1px rgba(255, 255, 255, .1),
-    0 32px 80px -12px rgba(0, 0, 0, .75);
-  animation: gf-lb-pop .26s cubic-bezier(.2, .8, .2, 1) both;
+    0 32px 80px -12px rgba(0, 0, 0, .8);
+  animation: gf-lb-pop .24s cubic-bezier(.2, .8, .2, 1) both;
 }
 @keyframes gf-lb-pop {
-  from { opacity: 0; transform: scale(.94) translateY(10px); }
+  from { opacity: 0; transform: scale(.96) translateY(8px); }
   to { opacity: 1; transform: none; }
 }
 .gf-lightbox-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 18px;
   border-bottom: 1px solid rgba(255, 255, 255, .1);
+  flex-shrink: 0;
 }
 .gf-lightbox-titles {
   display: flex;
@@ -1555,7 +1613,7 @@ const GF_LIGHTBOX_CSS = `
 }
 .gf-lightbox-name {
   margin: 0;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1569,14 +1627,22 @@ const GF_LIGHTBOX_CSS = `
 .gf-lightbox-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.gf-lb-zoom-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .07);
 }
 .gf-lb-btn {
   all: unset;
   cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 10px;
+  padding: 6px 11px;
+  border-radius: 9px;
   font-size: 12.5px;
   font-weight: 500;
   background: rgba(255, 255, 255, .12);
@@ -1584,7 +1650,7 @@ const GF_LIGHTBOX_CSS = `
   transition: background .15s;
 }
 .gf-lb-btn:hover {
-  background: rgba(255, 255, 255, .22);
+  background: rgba(255, 255, 255, .24);
 }
 .gf-lb-btn--danger {
   background: rgba(217, 45, 32, .25);
@@ -1598,35 +1664,55 @@ const GF_LIGHTBOX_CSS = `
   cursor: pointer;
   width: 32px;
   height: 32px;
-  border-radius: 10px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
   font-size: 14px;
-  background: rgba(255, 255, 255, .1);
+  background: rgba(255, 255, 255, .12);
   color: #fff;
 }
 .gf-lb-close:hover {
-  background: rgba(255, 255, 255, .22);
+  background: rgba(255, 255, 255, .24);
+}
+.gf-lightbox-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: rgba(8, 8, 10, .75);
 }
 .gf-lightbox-body {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 360px;
-  max-height: 70vh;
-  padding: 20px;
-  background: rgba(10, 10, 12, .6);
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+  display: flex;
+   flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px 64px;
+}
+.gf-lightbox-body--fit {
+  justify-content: center;
 }
 .gf-lightbox-img {
-  max-width: 100%;
-  max-height: 64vh;
+  display: block;
+  height: auto;
   border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .65);
+  cursor: zoom-in;
+  transition: width .2s cubic-bezier(.2, .8, .2, 1);
+}
+.gf-lightbox-img--zoomout {
+  cursor: zoom-out;
+}
+.gf-lightbox-img--fit {
+  width: auto !important;
+  max-width: 100%;
+  max-height: calc(95vh - 135px);
   object-fit: contain;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, .55);
 }
 .gf-lightbox-art-wrap {
+  margin: auto;
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 20px 50px rgba(0, 0, 0, .55);
@@ -1637,9 +1723,10 @@ const GF_LIGHTBOX_CSS = `
   height: auto;
 }
 .gf-lightbox-paper {
-  width: min(480px, 85vw);
-  min-height: 280px;
-  padding: 28px;
+  margin: auto;
+  width: min(560px, 88vw);
+  min-height: 320px;
+  padding: 32px;
   border-radius: 16px;
   background: linear-gradient(180deg, #ffffff 0%, #f2f2f0 100%);
   color: #18181b;
@@ -1672,31 +1759,41 @@ const GF_LIGHTBOX_CSS = `
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 40px;
-  height: 40px;
+  z-index: 10;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   display: grid;
   place-items: center;
-  font-size: 24px;
-  background: rgba(255, 255, 255, .14);
+  font-size: 26px;
+  background: rgba(255, 255, 255, .16);
   color: #fff;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
   transition: background .15s, transform .15s;
 }
 .gf-lb-nav:hover {
-  background: rgba(255, 255, 255, .28);
-  transform: translateY(-50%) scale(1.06);
+  background: rgba(255, 255, 255, .3);
+  transform: translateY(-50%) scale(1.08);
 }
-.gf-lb-nav--prev { left: 16px; }
-.gf-lb-nav--next { right: 16px; }
+.gf-lb-nav--prev { left: 14px; }
+.gf-lb-nav--next { right: 14px; }
 .gf-lightbox-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 18px;
   font-size: 12px;
   color: rgba(245, 245, 247, .55);
   border-top: 1px solid rgba(255, 255, 255, .08);
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .gf-lightbox-body {
+    padding: 12px 12px;
+  }
 }
 `
 
