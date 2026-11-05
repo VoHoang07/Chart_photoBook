@@ -121,15 +121,6 @@ export default function GlassFolderCardsDemo() {
     setFolders((prev) => [...prev, nextFolder])
   }
 
-  const resetDefault = () => {
-    setFolders(DEFAULT_FOLDERS)
-    try {
-      window.localStorage.removeItem(STORAGE_KEY)
-    } catch {
-      // ignore
-    }
-  }
-
   return (
     <div
       className="relative flex w-full flex-col items-center justify-center overflow-hidden bg-background px-6 py-16"
@@ -152,13 +143,6 @@ export default function GlassFolderCardsDemo() {
           className="cursor-pointer rounded-full bg-foreground px-4 py-2 text-xs font-medium text-background shadow-sm transition hover:opacity-90 active:scale-95"
         >
           + Thêm Folder mới
-        </button>
-        <button
-          type="button"
-          onClick={resetDefault}
-          className="cursor-pointer rounded-full border border-foreground/15 bg-background/80 px-4 py-2 text-xs font-medium text-muted-foreground backdrop-blur transition hover:text-foreground active:scale-95"
-        >
-          Khôi phục mặc định
         </button>
       </div>
 
